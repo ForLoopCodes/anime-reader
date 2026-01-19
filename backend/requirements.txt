@@ -1,0 +1,25 @@
+# Core Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Text-to-Speech
+edge-tts>=6.1.9
+
+# Voice Conversion (RVC)
+rvc-python==0.1.5
+
+# Hugging Face Model Hub
+huggingface_hub>=0.19.0
+
+# Audio Processing
+pydub>=0.25.1
+soundfile>=0.12.1
+
+# PyTorch (CUDA 11.8 - adjust for your GPU)
+# For CPU-only: torch>=2.0.0
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Additional utilities
+python-multipart>=0.0.6
+aiofiles>=23.2.1

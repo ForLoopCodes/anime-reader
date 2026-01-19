@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Anime Voice Reader</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        width: 320px;
+        min-height: 200px;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        color: #eee;
+        padding: 16px;
+      }
+
+      .header {
+        text-align: center;
+        margin-bottom: 16px;
+      }
+
+      .header h1 {
+        font-size: 18px;
+        color: #ff6b9d;
+        margin-bottom: 4px;
+      }
+
+      .header p {
+        font-size: 11px;
+        color: #888;
+      }
+
+      .status-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        margin-bottom: 16px;
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #ff4757;
+      }
+
+      .status-dot.connected {
+        background: #2ed573;
+      }
+
+      .status-text {
+        font-size: 12px;
+        flex: 1;
+      }
+
+      .section {
+        margin-bottom: 16px;
+      }
+
+      .section-title {
+        font-size: 12px;
+        color: #888;
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      select {
+        width: 100%;
+        padding: 10px 12px;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23888' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+      }
+
+      select:focus {
+        outline: none;
+        border-color: #ff6b9d;
+      }
+
+      select option {
+        background: #1a1a2e;
+        color: #fff;
+      }
+
+      .speed-control {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .speed-control input[type="range"] {
+        flex: 1;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 2px;
+        appearance: none;
+        cursor: pointer;
+      }
+
+      .speed-control input[type="range"]::-webkit-slider-thumb {
+        appearance: none;
+        width: 16px;
+        height: 16px;
+        background: #ff6b9d;
+        border-radius: 50%;
+        cursor: pointer;
+      }
+
+      .speed-value {
+        font-size: 12px;
+        color: #ff6b9d;
+        min-width: 40px;
+        text-align: center;
+      }
+
+      .test-section {
+        margin-top: 16px;
+      }
+
+      .test-btn {
+        width: 100%;
+        padding: 12px;
+        background: linear-gradient(135deg, #ff6b9d 0%, #c44569 100%);
+        border: none;
+        border-radius: 8px;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          transform 0.2s,
+          box-shadow 0.2s;
+      }
+
+      .test-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(255, 107, 157, 0.4);
+      }
+
+      .test-btn:active {
+        transform: translateY(0);
+      }
+
+      .test-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .footer {
+        margin-top: 16px;
+        text-align: center;
+        font-size: 10px;
+        color: #555;
+      }
+
+      .footer a {
+        color: #ff6b9d;
+        text-decoration: none;
+      }
+
+      .loading {
+        display: none;
+        text-align: center;
+        padding: 20px;
+      }
+
+      .loading.show {
+        display: block;
+      }
+
+      .spinner {
+        width: 24px;
+        height: 24px;
+        border: 2px solid rgba(255, 107, 157, 0.3);
+        border-top-color: #ff6b9d;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin: 0 auto 8px;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .error-msg {
+        background: rgba(255, 71, 87, 0.2);
+        border: 1px solid rgba(255, 71, 87, 0.5);
+        border-radius: 8px;
+        padding: 10px;
+        font-size: 12px;
+        color: #ff6b6b;
+        margin-bottom: 16px;
+        display: none;
+      }
+
+      .error-msg.show {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>🎭 Anime Voice Reader</h1>
+      <p>Select text on any page to hear it in anime voices</p>
+    </div>
+
+    <div class="status-bar">
+      <div class="status-dot" id="statusDot"></div>
+      <span class="status-text" id="statusText">Checking server...</span>
+    </div>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <p>Loading voices...</p>
+    </div>
+
+    <div id="mainContent">
+      <div class="section">
+        <div class="section-title">Character Voice</div>
+        <select id="voiceSelect">
+          <option value="">Select a character...</option>
+        </select>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Speech Speed</div>
+        <div class="speed-control">
+          <input
+            type="range"
+            id="speedSlider"
+            min="0.5"
+            max="2.0"
+            step="0.1"
+            value="1.0"
+          />
+          <span class="speed-value" id="speedValue">1.0x</span>
+        </div>
+      </div>
+
+      <div class="test-section">
+        <button class="test-btn" id="testBtn" disabled>🔊 Test Voice</button>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>
+        Server:
+        <a href="http://localhost:8000" target="_blank">localhost:8000</a>
+      </p>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
