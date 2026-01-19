@@ -59,12 +59,12 @@ function ensureStyles() {
       transition: all 0.08s ease-out;
     }
     .${WORD_HIGHLIGHT_CLASS} {
-      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%) !important;
+      background: linear-gradient(135deg, #a3eaff 0%, #0bc6f5 100%) !important;
       color: #111827 !important;
       border-radius: 3px;
       padding: 2px 4px;
       margin: -2px -4px;
-      box-shadow: 0 2px 12px rgba(251, 191, 36, 0.6);
+      box-shadow: 0 2px 12px rgba(69, 187, 255, 0.32);
     }
   `;
   document.head.appendChild(style);
