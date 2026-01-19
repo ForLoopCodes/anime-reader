@@ -19,7 +19,7 @@ cmd=[
     "-mp",pth,
     "-i",base,
     "-o",out,
-    "-me","rmvpe",
+    "-me","harvest",
     "-de","cuda"
 ]
 

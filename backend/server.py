@@ -58,34 +58,21 @@ def get_available_voices():
     return sorted(out,key=lambda v:v.name)
 
 async def tts_with_timings(text,out,speed):
-    """Generate TTS with word-level timing data"""
     if speed==1.0:
         c=edge_tts.Communicate(text,DEFAULT_TTS_VOICE)
     else:
         c=edge_tts.Communicate(text,DEFAULT_TTS_VOICE,rate=f"{int((speed-1)*100):+d}%")
-    
-    submaker=edge_tts.SubMaker()
     timings=[]
-    
     async for chunk in c.stream():
         if chunk["type"]=="audio":
             with open(out,"ab") as f:
                 f.write(chunk["data"])
         elif chunk["type"]=="WordBoundary":
-            submaker.feed(chunk)
-    
-    # Parse subtitles to get word timings
-    subs=submaker.generate()
-    for sub in subs:
-        if hasattr(sub,'text') and sub.text.strip():
-            start_sec=sub.start.total_seconds()
-            end_sec=sub.end.total_seconds()
             timings.append({
-                "word":sub.text.strip(),
-                "start":start_sec,
-                "end":end_sec
+                "word":chunk["text"],
+                "start":chunk["offset"]/1e7,
+                "end":(chunk["offset"]+chunk["duration"])/1e7
             })
-    
     return timings
 
 def rvc_convert(inp,out,character):
@@ -98,7 +85,7 @@ def rvc_convert(inp,out,character):
         "-mp",str(pth),
         "-i",str(inp),
         "-o",str(out),
-        "-me","rmvpe",
+        "-me","harvest",
         "-de","cuda"
     ]
     if idx.exists(): cmd+=["-ip",str(idx)]
