@@ -20,7 +20,7 @@ cmd=[
     "-i",base,
     "-o",out,
     "-me","rmvpe",
-    "-de","cpu"
+    "-de","cuda"
 ]
 
 if os.path.exists(idx):

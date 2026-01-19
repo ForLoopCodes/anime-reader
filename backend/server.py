@@ -75,7 +75,7 @@ def rvc_convert(inp,out,character):
         "-i",str(inp),
         "-o",str(out),
         "-me","rmvpe",
-        "-de","cpu"
+        "-de","cuda"
     ]
     if idx.exists(): cmd+=["-ip",str(idx)]
     subprocess.run(cmd,check=True)
