@@ -15,6 +15,7 @@ TEMP_DIR=BACKEND_DIR/"temp"
 
 MODELS_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
+WHISPER_MODEL=None
 
 DEFAULT_TTS_VOICE="en-US-AriaNeural"
 
@@ -99,7 +100,10 @@ def timings_with_whisper(wav_path:Path):
         raise HTTPException(500,"Install whisper-timestamped to get word timings")
 
     device="cuda" if torch.cuda.is_available() else "cpu"
-    model=whisper.load_model("base",device=device)
+    global WHISPER_MODEL
+    if WHISPER_MODEL is None:
+        WHISPER_MODEL = whisper.load_model("base", device=device)
+    model = WHISPER_MODEL
     result=whisper.transcribe(model,audio=str(wav_path))
 
     timings=[]
@@ -138,8 +142,11 @@ async def speak(req:SpeakRequest,background:BackgroundTasks):
             raise HTTPException(500,"Audio generation failed")
 
         if not timings:
-            timings=timings_with_whisper(out)
-        
+            try:
+                timings = timings_with_whisper(out)
+            except Exception as e:
+                timings = []
+
         # Read audio file and convert to base64
         with open(out,"rb") as f:
             audio_data=f.read()
