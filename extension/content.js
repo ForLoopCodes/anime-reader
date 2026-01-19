@@ -13,6 +13,9 @@ const MAX_SELECTION_LENGTH = 5000;
 // State
 let floatingButton = null;
 let lastSelection = "";
+let highlayerElement = null;
+let wordTimings = [];
+let currentPlaybackTime = 0;
 
 /**
  * Create the floating read button element
@@ -84,6 +87,93 @@ function showButton(x, y) {
 function hideButton() {
   if (floatingButton) {
     floatingButton.style.display = "none";
+  }
+}
+
+/**
+ * Create a highlight layer overlay for the selected text
+ */
+function createHighlightLayer(selection) {
+  // Remove existing highlight layer
+  if (highlayerElement && highlayerElement.parentNode) {
+    highlayerElement.parentNode.removeChild(highlayerElement);
+  }
+
+  // Create container for highlights
+  highlayerElement = document.createElement("div");
+  highlayerElement.id = "anime-voice-reader-highlight-layer";
+  highlayerElement.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 2147483646;
+  `;
+
+  // Get all ranges from selection
+  const ranges = [];
+  for (let i = 0; i < selection.rangeCount; i++) {
+    ranges.push(selection.getRangeAt(i));
+  }
+
+  // Create highlights for each range
+  ranges.forEach((range) => {
+    const rect = range.getBoundingClientRect();
+    const highlight = document.createElement("div");
+    highlight.className = "anime-voice-reader-word-highlight";
+    highlight.style.cssText = `
+      position: fixed;
+      top: ${window.scrollY + rect.top}px;
+      left: ${window.scrollX + rect.left}px;
+      width: ${rect.width}px;
+      height: ${rect.height}px;
+      background-color: rgba(255, 215, 0, 0.4);
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.1s ease;
+    `;
+    highlayerElement.appendChild(highlight);
+  });
+
+  document.body.appendChild(highlayerElement);
+}
+
+/**
+ * Update word highlighting based on current playback time
+ */
+function updateWordHighlight(currentTime) {
+  currentPlaybackTime = currentTime;
+
+  if (!highlayerElement) return;
+
+  const highlights = highlayerElement.querySelectorAll(
+    ".anime-voice-reader-word-highlight",
+  );
+  highlights.forEach((highlight, index) => {
+    if (wordTimings[index]) {
+      const timing = wordTimings[index];
+      const isActive = currentTime >= timing.start && currentTime < timing.end;
+      highlight.style.opacity = isActive ? "1" : "0.2";
+      if (isActive) {
+        highlight.style.backgroundColor = "rgba(255, 69, 0, 0.6)"; // Orange-red for active
+      } else {
+        highlight.style.backgroundColor = "rgba(255, 215, 0, 0.4)"; // Gold for upcoming
+      }
+    }
+  });
+}
+
+/**
+ * Clean up highlight layer
+ */
+function removeHighlightLayer() {
+  if (highlayerElement && highlayerElement.parentNode) {
+    highlayerElement.parentNode.removeChild(highlayerElement);
+    highlayerElement = null;
+    wordTimings = [];
   }
 }
 
@@ -196,13 +286,26 @@ function handleKeydown(event) {
  * Listen for messages from background script
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "AUDIO_FINISHED") {
+  if (message.type === "START_READING") {
+    // Text is about to be read - create highlight layer
+    const selection = window.getSelection();
+    createHighlightLayer(selection);
+    wordTimings = message.timings || [];
+    console.log("📖 Started reading with", wordTimings.length, "word timings");
+  } else if (message.type === "PLAYBACK_UPDATE") {
+    // Update highlight based on current playback time
+    updateWordHighlight(message.currentTime);
+  } else if (message.type === "AUDIO_FINISHED") {
+    // Clean up highlights
+    removeHighlightLayer();
     hideButton();
     if (floatingButton) {
       floatingButton.style.pointerEvents = "auto";
       floatingButton.innerHTML = "🔊 Read";
     }
   } else if (message.type === "AUDIO_ERROR") {
+    // Clean up on error
+    removeHighlightLayer();
     if (floatingButton) {
       floatingButton.innerHTML = "❌ " + (message.error || "Error");
       floatingButton.style.pointerEvents = "auto";

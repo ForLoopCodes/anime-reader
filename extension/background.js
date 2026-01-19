@@ -50,6 +50,7 @@ async function notifyContentScript(message) {
 
 /**
  * Convert text to speech using the backend API
+ * Returns {audio: Blob, timings: Array}
  */
 async function textToSpeech(text, character, speed) {
   const response = await fetch(`${API_BASE}/speak`, {
@@ -71,18 +72,39 @@ async function textToSpeech(text, character, speed) {
     throw new Error(error.detail || `Server returned ${response.status}`);
   }
 
-  return await response.blob();
+  const data = await response.json();
+  
+  // Convert base64 audio back to blob
+  const binaryString = atob(data.audio);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  const audioBlob = new Blob([bytes], { type: "audio/wav" });
+  
+  return {
+    audio: audioBlob,
+    timings: data.timings || []
+  };
 }
 
 /**
- * Play audio from a blob
+ * Play audio from a blob and track playback time
+ * Returns a promise that resolves when audio finishes
  */
-async function playAudioBlob(blob) {
+async function playAudioBlob(blob, onTimeUpdate = null) {
   return new Promise((resolve, reject) => {
     const audioUrl = URL.createObjectURL(blob);
     const audio = new Audio(audioUrl);
 
     currentAudio = audio;
+
+    // Call onTimeUpdate with current time and duration
+    if (onTimeUpdate) {
+      audio.ontimeupdate = () => {
+        onTimeUpdate(audio.currentTime, audio.duration);
+      };
+    }
 
     audio.onended = () => {
       URL.revokeObjectURL(audioUrl);
@@ -125,18 +147,31 @@ async function handleReadText(text, sendResponse) {
 
     console.log(`Converting text to ${settings.character}'s voice...`);
 
-    // Get audio from backend
-    const audioBlob = await textToSpeech(
+    // Get audio and timings from backend
+    const result = await textToSpeech(
       text,
       settings.character,
       settings.speed,
     );
 
+    // Send timings to content script
+    await notifyContentScript({
+      type: "START_READING",
+      timings: result.timings
+    });
+
     // Play the audio
     sendResponse({ success: true });
 
     try {
-      await playAudioBlob(audioBlob);
+      await playAudioBlob(result.audio, async (currentTime, duration) => {
+        // Send current playback time to content script
+        await notifyContentScript({
+          type: "PLAYBACK_UPDATE",
+          currentTime: currentTime,
+          duration: duration
+        });
+      });
       await notifyContentScript({ type: "AUDIO_FINISHED" });
     } catch (playError) {
       console.error("Playback error:", playError);

@@ -1,9 +1,23 @@
 /* 
  * content.css
- * Additional styles for the floating button (if needed)
+ * Styles for the floating button and word highlighting
  */
 
 #anime-voice-reader-btn {
   /* Styles are inline in content.js for isolation */
   /* This file can be used for additional styling if needed */
 }
+
+/* Word highlighting layer */
+#anime-voice-reader-highlight-layer {
+  /* Container for word highlights - positioned absolutely */
+}
+
+.anime-voice-reader-word-highlight {
+  /* Individual word highlight boxes */
+  box-shadow: 0 0 8px rgba(255, 69, 0, 0.3);
+}
+
+.anime-voice-reader-word-highlight:hover {
+  /* Slight enhancement on hover for debugging */
+  box-shadow: 0 0 12px rgba(255, 69, 0, 0.6);
