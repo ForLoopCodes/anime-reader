@@ -10,6 +10,9 @@ const API_BASE = "http://localhost:8000";
 // Keep track of current audio
 let currentAudio = null;
 
+// Keep track of active ports to prevent service worker termination
+let activePorts = new Set();
+
 /**
  * Stop any currently playing audio
  */
@@ -41,10 +44,20 @@ async function notifyContentScript(message) {
       currentWindow: true,
     });
     if (tab?.id) {
-      await chrome.tabs.sendMessage(tab.id, message);
+      try {
+        await chrome.tabs.sendMessage(tab.id, message);
+      } catch (sendError) {
+        // Silently fail if content script is not ready or context is invalid
+        if (!sendError.message?.includes("Could not establish connection")) {
+          console.debug(
+            "Content script notification failed:",
+            sendError.message,
+          );
+        }
+      }
     }
   } catch (error) {
-    console.log("Could not notify content script:", error);
+    console.debug("Could not notify content script:", error.message);
   }
 }
 
@@ -73,7 +86,7 @@ async function textToSpeech(text, character, speed) {
   }
 
   const data = await response.json();
-  
+
   // Convert base64 audio back to blob
   const binaryString = atob(data.audio);
   const bytes = new Uint8Array(binaryString.length);
@@ -81,10 +94,10 @@ async function textToSpeech(text, character, speed) {
     bytes[i] = binaryString.charCodeAt(i);
   }
   const audioBlob = new Blob([bytes], { type: "audio/wav" });
-  
+
   return {
     audio: audioBlob,
-    timings: data.timings || []
+    timings: data.timings || [],
   };
 }
 
@@ -148,16 +161,12 @@ async function handleReadText(text, sendResponse) {
     console.log(`Converting text to ${settings.character}'s voice...`);
 
     // Get audio and timings from backend
-    const result = await textToSpeech(
-      text,
-      settings.character,
-      settings.speed,
-    );
+    const result = await textToSpeech(text, settings.character, settings.speed);
 
     // Send timings to content script
     await notifyContentScript({
       type: "START_READING",
-      timings: result.timings
+      timings: result.timings,
     });
 
     // Play the audio
@@ -169,7 +178,7 @@ async function handleReadText(text, sendResponse) {
         await notifyContentScript({
           type: "PLAYBACK_UPDATE",
           currentTime: currentTime,
-          duration: duration
+          duration: duration,
         });
       });
       await notifyContentScript({ type: "AUDIO_FINISHED" });
@@ -188,7 +197,41 @@ async function handleReadText(text, sendResponse) {
 }
 
 /**
- * Message listener
+ * Port connection handler - keeps service worker alive
+ */
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === "content-script") {
+    console.log("✓ Content script connected via port");
+    activePorts.add(port);
+
+    port.onMessage.addListener((message, sender) => {
+      if (message.type === "READ_TEXT") {
+        handleReadText(message.text, (response) => {
+          try {
+            port.postMessage(response);
+          } catch (error) {
+            console.debug("Port closed before response:", error.message);
+          }
+        });
+      } else if (message.type === "STOP_AUDIO") {
+        stopCurrentAudio();
+        try {
+          port.postMessage({ success: true });
+        } catch (error) {
+          console.debug("Port closed");
+        }
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      console.log("✓ Content script port disconnected");
+      activePorts.delete(port);
+    });
+  }
+});
+
+/**
+ * Message listener (for backward compatibility)
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "READ_TEXT") {
@@ -205,9 +248,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "GET_STATUS") {
     // Return current status
-    sendResponse({
-      isPlaying: currentAudio !== null,
-      settings: getSettings(),
+    getSettings().then((settings) => {
+      sendResponse({
+        isPlaying: currentAudio !== null,
+        settings: settings,
+      });
     });
     return true;
   }
@@ -233,4 +278,8 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 });
 
-console.log("🎭 Anime Voice Reader background service started");
+/**
+ * Initialize service worker
+ */
+console.log("🎭 Anime Voice Reader service worker initialized");
+console.log("📡 Ready to receive messages from content scripts");

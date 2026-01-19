@@ -163,10 +163,11 @@ async function testVoice() {
       throw new Error(error.detail || "Failed to generate audio");
     }
 
-    // Get the audio blob and play it
-    const audioBlob = await response.blob();
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
+    const data = await response.json()
+
+    const binary = atob(data.audio)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCode
 
     audio.onended = () => {
       URL.revokeObjectURL(audioUrl);

@@ -16,6 +16,43 @@ let lastSelection = "";
 let highlayerElement = null;
 let wordTimings = [];
 let currentPlaybackTime = 0;
+let extensionValid = true;
+let reloadScheduled = false;
+
+/**
+ * Check if extension context is valid
+ */
+async function isExtensionValid() {
+  try {
+    await chrome.runtime.sendMessage({ type: "GET_STATUS" });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
+ * Handle invalidated extension context by reloading the page once
+ */
+function handleInvalidatedContext() {
+  if (reloadScheduled) {
+    return;
+  }
+  reloadScheduled = true;
+
+  if (floatingButton) {
+    floatingButton.innerHTML = "🔄 Reloading...";
+    floatingButton.style.pointerEvents = "none";
+  }
+
+  setTimeout(() => {
+    try {
+      window.location.reload();
+    } catch (e) {
+      console.warn("Page reload failed:", e);
+    }
+  }, 800);
+}
 
 /**
  * Create the floating read button element
@@ -178,6 +215,96 @@ function removeHighlightLayer() {
 }
 
 /**
+ * Send message using persistent port connection with better error handling
+ */
+async function sendMessageViaPort(message) {
+  return new Promise((resolve, reject) => {
+    let port = null;
+    let timeoutId = null;
+    let responded = false;
+
+    try {
+      port = chrome.runtime.connect({ name: "content-script" });
+
+      timeoutId = setTimeout(() => {
+        if (!responded && port) {
+          try {
+            port.disconnect();
+          } catch (e) {
+            // Already disconnected
+          }
+        }
+        reject(new Error("Port timeout - service worker may be unresponsive"));
+      }, 15000); // 15 second timeout instead of 30
+
+      port.onMessage.addListener((response) => {
+        responded = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        try {
+          port.disconnect();
+        } catch (e) {
+          // Already disconnected
+        }
+        resolve(response);
+      });
+
+      port.onDisconnect.addListener(() => {
+        if (!responded && timeoutId) {
+          clearTimeout(timeoutId);
+          reject(new Error("Port disconnected"));
+        }
+      });
+
+      // Send message with error handling
+      try {
+        port.postMessage(message);
+      } catch (sendError) {
+        if (timeoutId) clearTimeout(timeoutId);
+        reject(sendError);
+      }
+    } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Send message with multiple fallback strategies
+ */
+async function sendMessageWithFallback(message, maxRetries = 2) {
+  // Strategy 1: Try port connection
+  try {
+    const result = await sendMessageViaPort(message);
+    console.debug("✓ Port message succeeded");
+    return result;
+  } catch (portError) {
+    console.debug("✗ Port failed:", portError.message);
+  }
+
+  // Strategy 2: Try direct sendMessage with retries
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      console.debug(`Attempting sendMessage (${i + 1}/${maxRetries})`);
+      const result = await chrome.runtime.sendMessage(message);
+      console.debug("✓ SendMessage succeeded");
+      return result;
+    } catch (error) {
+      console.debug(`SendMessage attempt ${i + 1} failed:`, error.message);
+      if (i < maxRetries - 1) {
+        // Wait before retry
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+  }
+
+  // If we get here, all strategies failed
+  throw new Error(
+    "All communication strategies failed - extension may need reload",
+  );
+}
+
+/**
  * Handle the read button click
  */
 async function handleReadClick(event) {
@@ -195,30 +322,55 @@ async function handleReadClick(event) {
 
   try {
     // Send message to background script
-    const response = await chrome.runtime.sendMessage({
+    console.log("📤 Sending read request...");
+    const response = await sendMessageWithFallback({
       type: "READ_TEXT",
       text: lastSelection,
     });
 
     if (response && response.error) {
-      console.error("Error from background:", response.error);
+      console.error("❌ Error from background:", response.error);
       floatingButton.innerHTML = "❌ Error";
-      setTimeout(hideButton, 1500);
-    } else {
+      floatingButton.style.pointerEvents = "auto";
+      setTimeout(hideButton, 2500);
+    } else if (response && response.success) {
+      console.log("✓ Audio playing");
       floatingButton.innerHTML = "🔊 Playing...";
-      // Button will be hidden after audio finishes (handled by background)
       setTimeout(() => {
         hideButton();
         floatingButton.style.pointerEvents = "auto";
       }, 1000);
     }
   } catch (error) {
-    console.error("Failed to send message:", error);
-    floatingButton.innerHTML = "❌ Failed";
-    setTimeout(() => {
-      hideButton();
+    console.error("❌ Failed to send message:", error.message);
+
+    const isInvalidated =
+      error.message && error.message.includes("Extension context invalidated");
+    const isReloadNeeded =
+      error.message &&
+      (error.message.includes("extension may need reload") ||
+        error.message.includes("Extension context"));
+
+    if (isInvalidated) {
+      console.warn("⚠️  Extension context invalidated. Reloading page...");
+      handleInvalidatedContext();
+      return;
+    }
+
+    const errorText = isReloadNeeded ? "Reload ext" : "Failed";
+    if (floatingButton) {
+      floatingButton.innerHTML = `❌ ${errorText}`;
       floatingButton.style.pointerEvents = "auto";
-    }, 1500);
+    }
+
+    // Log detailed error for debugging
+    if (isReloadNeeded) {
+      console.warn(
+        "⚠️  Extension may need to be reloaded. Try: chrome://extensions/",
+      );
+    }
+
+    setTimeout(hideButton, 2500);
   }
 }
 
