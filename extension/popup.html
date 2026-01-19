@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -10,7 +10,6 @@
     <div class="app">
       <header>
         <h1>Anime Voice Reader</h1>
-        <p class="sub">Select text on the page, then press Speak.</p>
       </header>
 
       <section class="card">
@@ -27,14 +26,102 @@
             step="0.05"
             value="1"
           />
-          <span id="speedValue">1.00x</span>
+          <span id="speedValue" class="mono">1.00x</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <label class="label">Settings</label>
+
+        <div class="setting-row">
+          <span>Highlight Opacity</span>
+          <div class="row compact">
+            <input
+              id="opacity"
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value="0.7"
+            />
+            <span id="opacityValue" class="mono">70%</span>
+          </div>
         </div>
 
+        <div class="setting-row">
+          <span>Auto-scroll</span>
+          <label class="switch">
+            <input type="checkbox" id="autoScroll" checked />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <label class="label">Character Images</label>
+        <p class="hint">Set idle/speaking images for the selected voice</p>
+
+        <div class="image-inputs">
+          <div class="image-field">
+            <label>Idle</label>
+            <input type="text" id="idleImage" placeholder="URL or file path" />
+          </div>
+          <div class="image-field">
+            <label>Speaking</label>
+            <input
+              type="text"
+              id="speakingImage"
+              placeholder="URL or file path"
+            />
+          </div>
+        </div>
+
+        <div class="preview-row">
+          <div class="preview-box">
+            <img id="idlePreview" alt="" />
+          </div>
+          <div class="preview-box">
+            <img id="speakingPreview" alt="" />
+          </div>
+        </div>
+
+        <div class="setting-row" style="margin-top: 12px">
+          <span>Height</span>
+          <div class="row compact">
+            <input
+              id="charHeight"
+              type="range"
+              min="20"
+              max="80"
+              step="5"
+              value="50"
+            />
+            <span id="charHeightValue" class="mono">50vh</span>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <span>Right Margin</span>
+          <div class="row compact">
+            <input
+              id="charMargin"
+              type="range"
+              min="0"
+              max="100"
+              step="4"
+              value="24"
+            />
+            <span id="charMarginValue" class="mono">24px</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
         <label class="label">Text</label>
         <textarea
           id="text"
-          rows="4"
-          placeholder="Type text or use selected text"
+          rows="3"
+          placeholder="Select text on page or type here"
         ></textarea>
 
         <div class="row actions">

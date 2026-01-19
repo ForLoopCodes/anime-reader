@@ -7,16 +7,79 @@ let selectionCache = null;
 let currentAudio = null;
 let cachedVoices = null;
 
-// Word highlighting system - using real-time sync
 let wordSpans = [];
 let animationFrameId = null;
 let currentTimings = [];
 let lastHighlightedIndex = -1;
 
+let characterContainer = null;
+let characterImg = null;
+let currentVoice = null;
+let isReading = false;
+let currentWordForLipSync = "";
+let lipSyncLetterIndex = 0;
+let lipSyncAnimationId = null;
+let lastLipSyncTime = 0;
+let isCurrentlyInWord = false;
+let mouthOpenUntil = 0;
+let darkenOverlay = null;
+
+let settings = {
+  highlightOpacity: 0.7,
+  autoScrollEnabled: true,
+  voiceImages: {},
+  characterHeight: 50,
+  characterMargin: 24,
+};
+
 const STYLE_ID = "anime-voice-reader-style";
 const BUBBLE_ID = "anime-voice-reader-bubble";
+const CHARACTER_ID = "anime-voice-reader-character";
 const WORD_HIGHLIGHT_CLASS = "anime-voice-word-highlight";
 const WORD_SPAN_CLASS = "anime-voice-word";
+const PAGE_DIM_CLASS = "anime-voice-reader-dimmed";
+
+async function loadSettings() {
+  try {
+    const stored = await chrome.storage.local.get([
+      "highlightOpacity",
+      "autoScrollEnabled",
+      "voiceImages",
+      "characterHeight",
+      "characterMargin",
+    ]);
+    if (stored.highlightOpacity !== undefined)
+      settings.highlightOpacity = stored.highlightOpacity;
+    if (stored.autoScrollEnabled !== undefined)
+      settings.autoScrollEnabled = stored.autoScrollEnabled;
+    if (stored.voiceImages) settings.voiceImages = stored.voiceImages;
+    if (stored.characterHeight !== undefined)
+      settings.characterHeight = stored.characterHeight;
+    if (stored.characterMargin !== undefined)
+      settings.characterMargin = stored.characterMargin;
+  } catch {}
+}
+
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.highlightOpacity) {
+    settings.highlightOpacity = changes.highlightOpacity.newValue;
+    if (isReading) applyPageDim();
+  }
+  if (changes.autoScrollEnabled) {
+    settings.autoScrollEnabled = changes.autoScrollEnabled.newValue;
+  }
+  if (changes.voiceImages) {
+    settings.voiceImages = changes.voiceImages.newValue || {};
+  }
+  if (changes.characterHeight) {
+    settings.characterHeight = changes.characterHeight.newValue;
+    updateCharacterPosition();
+  }
+  if (changes.characterMargin) {
+    settings.characterMargin = changes.characterMargin.newValue;
+    updateCharacterPosition();
+  }
+});
 
 function ensureStyles() {
   if (document.getElementById(STYLE_ID)) return;
@@ -27,47 +90,200 @@ function ensureStyles() {
       position: fixed;
       z-index: 2147483647;
       display: none;
-      background: #0f172a;
-      color: #e2e8f0;
-      border: 1px solid #1f2937;
-      border-radius: 10px;
+      background: #09090b;
+      color: #fafafa;
+      border: 1px solid #27272a;
+      border-radius: 8px;
       padding: 6px 8px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-      font-family: "Segoe UI", system-ui, sans-serif;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      font-family: ui-monospace, monospace;
       font-size: 12px;
       gap: 6px;
       align-items: center;
     }
     #${BUBBLE_ID} button {
-      background: #38bdf8;
+      background: #fafafa;
       border: none;
-      color: #0b1220;
+      color: #09090b;
       font-weight: 600;
-      padding: 6px 10px;
-      border-radius: 8px;
+      padding: 6px 12px;
+      border-radius: 6px;
       cursor: pointer;
-      transition: background 0.15s;
+      font-family: inherit;
+      transition: opacity 0.15s;
     }
     #${BUBBLE_ID} button:hover {
-      background: #7dd3fc;
+      opacity: 0.8;
     }
     #${BUBBLE_ID} .status {
-      color: #94a3b8;
+      color: #71717a;
       margin-left: 6px;
+      font-family: inherit;
+    }
+    #anime-voice-reader-darken {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      pointer-events: none;
+      z-index: 2147483640;
+      display: none;
+      transition: opacity 0.2s;
+    }
+    #${CHARACTER_ID} {
+      position: fixed;
+      bottom: 0;
+      right: 24px;
+      height: 50vh;
+      z-index: 2147483646;
+      display: none;
+      pointer-events: none;
+    }
+    #${CHARACTER_ID} img {
+      height: 100%;
+      width: auto;
+      object-fit: contain;
     }
     .${WORD_SPAN_CLASS} {
-      transition: all 0.08s ease-out;
+      position: relative;
+      z-index: 2147483641;
     }
     .${WORD_HIGHLIGHT_CLASS} {
       background: linear-gradient(135deg, #a3eaff 0%, #0bc6f5 100%) !important;
-      color: #111827 !important;
+      color: #09090b !important;
       border-radius: 3px;
       padding: 2px 4px;
       margin: -2px -4px;
-      box-shadow: 0 2px 12px rgba(69, 187, 255, 0.32);
+      box-shadow: 0 2px 16px rgba(69, 187, 255, 0.6);
+      z-index: 2147483642;
     }
   `;
   document.head.appendChild(style);
+}
+
+function ensureDarkenOverlay() {
+  if (darkenOverlay) return;
+  ensureStyles();
+  darkenOverlay = document.createElement("div");
+  darkenOverlay.id = "anime-voice-reader-darken";
+  document.body.appendChild(darkenOverlay);
+}
+
+function applyPageDim() {
+  ensureDarkenOverlay();
+  darkenOverlay.style.opacity = settings.highlightOpacity;
+  darkenOverlay.style.display = "block";
+}
+
+function removePageDim() {
+  if (darkenOverlay) {
+    darkenOverlay.style.display = "none";
+  }
+}
+
+function ensureCharacterContainer() {
+  if (characterContainer) return;
+  ensureStyles();
+  characterContainer = document.createElement("div");
+  characterContainer.id = CHARACTER_ID;
+  characterImg = document.createElement("img");
+  characterImg.alt = "";
+  characterContainer.appendChild(characterImg);
+  document.body.appendChild(characterContainer);
+}
+
+function showCharacter() {
+  ensureCharacterContainer();
+  const images = settings.voiceImages[currentVoice];
+  if (!images?.idle && !images?.speaking) {
+    characterContainer.style.display = "none";
+    return;
+  }
+  characterContainer.style.display = "block";
+  updateCharacterPosition();
+  if (images.idle) {
+    characterImg.src = images.idle;
+  } else if (images.speaking) {
+    characterImg.src = images.speaking;
+  }
+}
+
+function updateCharacterPosition() {
+  if (!characterContainer) return;
+  characterContainer.style.height = `${settings.characterHeight}vh`;
+  characterContainer.style.right = `${settings.characterMargin}px`;
+}
+
+function hideCharacter() {
+  if (characterContainer) {
+    characterContainer.style.display = "none";
+  }
+  stopLipSync();
+}
+
+function isVowel(char) {
+  return "aeiouyAEIOUY1234567890".includes(char);
+}
+
+function setMouthState(open) {
+  const images = settings.voiceImages[currentVoice];
+  if (!characterImg || !images) return;
+  if (open && images.speaking) {
+    characterImg.src = images.speaking;
+  } else if (images.idle) {
+    characterImg.src = images.idle;
+  }
+}
+
+function updateLipSyncForWord(word, wordProgress) {
+  const now = Date.now();
+
+  if (now < mouthOpenUntil) {
+    return;
+  }
+
+  if (!word || word.length === 0) {
+    setMouthState(false);
+    return;
+  }
+
+  const letters = word.replace(/[^a-zA-Z]/g, "");
+  if (letters.length === 0) {
+    setMouthState(false);
+    return;
+  }
+
+  const letterIndex =
+    Math.floor(wordProgress * letters.length * 2) % letters.length;
+  const currentLetter = letters[letterIndex];
+  const shouldOpen = isVowel(currentLetter) && Math.random() < 1;
+
+  if (shouldOpen) {
+    setMouthState(true);
+    mouthOpenUntil = now + 150;
+  } else {
+    setMouthState(false);
+  }
+}
+
+function startLipSync() {
+  const images = settings.voiceImages[currentVoice];
+  if (!images?.idle || !images?.speaking) return;
+  setMouthState(false);
+}
+
+function stopLipSync() {
+  if (lipSyncAnimationId) {
+    cancelAnimationFrame(lipSyncAnimationId);
+    lipSyncAnimationId = null;
+  }
+  currentWordForLipSync = "";
+  lipSyncLetterIndex = 0;
+  isCurrentlyInWord = false;
+  mouthOpenUntil = 0;
+  setMouthState(false);
 }
 
 function ensureBubble() {
@@ -78,7 +294,7 @@ function ensureBubble() {
   bubbleEl.style.display = "none";
 
   bubbleBtn = document.createElement("button");
-  bubbleBtn.textContent = "Read this";
+  bubbleBtn.textContent = "Read";
   bubbleBtn.addEventListener("click", () => {
     if (selectionCache?.text) {
       speakSelection(selectionCache);
@@ -102,7 +318,7 @@ function setBubbleStatus(msg) {
 function showBubbleAt(rect) {
   ensureBubble();
   const top = Math.max(8, rect.top - 36);
-  const left = Math.min(Math.max(8, rect.left), window.innerWidth - 160);
+  const left = Math.min(Math.max(8, rect.left), window.innerWidth - 140);
   bubbleEl.style.top = `${top}px`;
   bubbleEl.style.left = `${left}px`;
   bubbleEl.style.display = "flex";
@@ -141,7 +357,7 @@ async function loadVoices() {
   if (cachedVoices) return cachedVoices;
   try {
     const res = await fetch(`${API_BASE}/voices`);
-    if (!res.ok) throw new Error("Failed to load voices");
+    if (!res.ok) throw new Error();
     const data = await res.json();
     cachedVoices = data.voices || [];
   } catch {
@@ -150,15 +366,10 @@ async function loadVoices() {
   return cachedVoices;
 }
 
-// ============ REAL-TIME WORD HIGHLIGHTING SYSTEM ============
-
 function normalizeWord(word) {
   return word.toLowerCase().replace(/[^\w]/g, "");
 }
 
-/**
- * Stop the highlight animation loop and restore DOM
- */
 function stopHighlighting() {
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId);
@@ -166,47 +377,37 @@ function stopHighlighting() {
   }
   currentTimings = [];
   lastHighlightedIndex = -1;
+  isReading = false;
 
-  // Remove all highlights
   wordSpans.forEach((span) => {
-    if (span && span.classList) {
+    if (span?.classList) {
       span.classList.remove(WORD_HIGHLIGHT_CLASS);
     }
   });
 
-  // Restore DOM
   restoreOriginalNodes();
+  removePageDim();
+  hideCharacter();
 }
 
-/**
- * Restore the original DOM by replacing spans with text nodes
- */
 function restoreOriginalNodes() {
   const spansToRestore = [...wordSpans];
   wordSpans = [];
 
   spansToRestore.forEach((span) => {
     try {
-      if (span && span.parentNode) {
+      if (span?.parentNode) {
         const textNode = document.createTextNode(span.textContent || "");
         span.parentNode.replaceChild(textNode, span);
       }
-    } catch (e) {
-      // Ignore errors during cleanup
-    }
+    } catch {}
   });
 
-  // Normalize to merge adjacent text nodes
   try {
     document.body.normalize();
-  } catch (e) {
-    // Ignore
-  }
+  } catch {}
 }
 
-/**
- * Get all text nodes within a range
- */
 function getTextNodesInRange(range) {
   const textNodes = [];
   const root = range.commonAncestorContainer;
@@ -222,8 +423,7 @@ function getTextNodesInRange(range) {
 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: (node) => {
-      if (!node.nodeValue || !node.nodeValue.trim())
-        return NodeFilter.FILTER_REJECT;
+      if (!node.nodeValue?.trim()) return NodeFilter.FILTER_REJECT;
       if (!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
@@ -240,9 +440,6 @@ function getTextNodesInRange(range) {
   return textNodes;
 }
 
-/**
- * Wrap words in spans for highlighting
- */
 function wrapWordsInSpans(range) {
   ensureStyles();
   const spans = [];
@@ -250,8 +447,7 @@ function wrapWordsInSpans(range) {
   let textNodes;
   try {
     textNodes = getTextNodesInRange(range);
-  } catch (e) {
-    console.error("Failed to get text nodes:", e);
+  } catch {
     return spans;
   }
 
@@ -259,15 +455,11 @@ function wrapWordsInSpans(range) {
     try {
       const text = node.nodeValue || "";
       const segment = text.slice(start, end);
-
       const regex = /\S+/g;
       const matches = [];
       let match;
       while ((match = regex.exec(segment))) {
-        matches.push({
-          word: match[0],
-          index: start + match.index,
-        });
+        matches.push({ word: match[0], index: start + match.index });
       }
 
       if (matches.length === 0) continue;
@@ -281,13 +473,11 @@ function wrapWordsInSpans(range) {
             document.createTextNode(text.slice(lastIndex, m.index))
           );
         }
-
         const span = document.createElement("span");
         span.className = WORD_SPAN_CLASS;
         span.textContent = m.word;
         spans.push(span);
         fragment.appendChild(span);
-
         lastIndex = m.index + m.word.length;
       }
 
@@ -298,19 +488,14 @@ function wrapWordsInSpans(range) {
       if (node.parentNode) {
         node.parentNode.replaceChild(fragment, node);
       }
-    } catch (e) {
-      console.error("Failed to wrap words in node:", e);
-    }
+    } catch {}
   }
 
   return spans;
 }
 
-/**
- * Build a mapping from span index to timing index
- */
 function buildTimingMap(timings, spans) {
-  const map = []; // map[spanIndex] = timingIndex
+  const map = [];
   let timingIndex = 0;
 
   for (
@@ -319,9 +504,8 @@ function buildTimingMap(timings, spans) {
     spanIndex++
   ) {
     const spanWord = normalizeWord(spans[spanIndex].textContent || "");
-
-    // Look for this word in remaining timings
     let found = false;
+
     for (let t = timingIndex; t < timings.length && t < timingIndex + 3; t++) {
       const timingWord = normalizeWord(timings[t].word || "");
       if (
@@ -337,7 +521,6 @@ function buildTimingMap(timings, spans) {
     }
 
     if (!found) {
-      // Skip this span, no matching timing
       map[spanIndex] = -1;
     }
   }
@@ -345,21 +528,29 @@ function buildTimingMap(timings, spans) {
   return map;
 }
 
-/**
- * Real-time highlight loop using audio.currentTime
- */
+function scrollToWord(span) {
+  if (!settings.autoScrollEnabled || !span) return;
+  const rect = span.getBoundingClientRect();
+  const buffer = 100;
+  if (rect.top < buffer || rect.bottom > window.innerHeight - buffer) {
+    span.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
 function startHighlightLoop(audio, timings, timingMap) {
   if (!audio || !timings.length || !wordSpans.length) return;
 
   function updateHighlight() {
     if (!currentAudio || currentAudio.paused || currentAudio.ended) {
+      setMouthState(false);
       return;
     }
 
     const currentTime = audio.currentTime;
     let targetSpanIndex = -1;
+    let currentTiming = null;
+    let insideWordTiming = false;
 
-    // Find which span should be highlighted based on current time
     for (let i = 0; i < wordSpans.length; i++) {
       const timingIdx = timingMap[i];
       if (timingIdx === -1 || timingIdx === undefined) continue;
@@ -367,11 +558,12 @@ function startHighlightLoop(audio, timings, timingMap) {
       const timing = timings[timingIdx];
       if (timing && currentTime >= timing.start && currentTime < timing.end) {
         targetSpanIndex = i;
+        currentTiming = timing;
+        insideWordTiming = true;
         break;
       }
     }
 
-    // Also check if we're past a word's start but before the next word starts
     if (targetSpanIndex === -1) {
       for (let i = wordSpans.length - 1; i >= 0; i--) {
         const timingIdx = timingMap[i];
@@ -379,7 +571,6 @@ function startHighlightLoop(audio, timings, timingMap) {
 
         const timing = timings[timingIdx];
         if (timing && currentTime >= timing.start) {
-          // Check if there's a next timing
           const nextTimingIdx = timingIdx + 1;
           if (
             nextTimingIdx >= timings.length ||
@@ -392,28 +583,35 @@ function startHighlightLoop(audio, timings, timingMap) {
       }
     }
 
-    // Update highlight if changed
     if (targetSpanIndex !== lastHighlightedIndex) {
-      // Remove old highlight
       if (
         lastHighlightedIndex >= 0 &&
         lastHighlightedIndex < wordSpans.length
       ) {
         const oldSpan = wordSpans[lastHighlightedIndex];
-        if (oldSpan && oldSpan.classList) {
+        if (oldSpan?.classList) {
           oldSpan.classList.remove(WORD_HIGHLIGHT_CLASS);
         }
       }
 
-      // Add new highlight
       if (targetSpanIndex >= 0 && targetSpanIndex < wordSpans.length) {
         const span = wordSpans[targetSpanIndex];
-        if (span && span.classList) {
+        if (span?.classList) {
           span.classList.add(WORD_HIGHLIGHT_CLASS);
+          scrollToWord(span);
         }
       }
 
       lastHighlightedIndex = targetSpanIndex;
+    }
+
+    if (insideWordTiming && currentTiming) {
+      const wordDuration = currentTiming.end - currentTiming.start;
+      const wordProgress = (currentTime - currentTiming.start) / wordDuration;
+      const word = currentTiming.word || "";
+      updateLipSyncForWord(word, Math.min(1, Math.max(0, wordProgress)));
+    } else {
+      setMouthState(false);
     }
 
     animationFrameId = requestAnimationFrame(updateHighlight);
@@ -421,8 +619,6 @@ function startHighlightLoop(audio, timings, timingMap) {
 
   animationFrameId = requestAnimationFrame(updateHighlight);
 }
-
-// ============ END WORD HIGHLIGHTING SYSTEM ============
 
 async function getSelectedVoice() {
   const stored = await chrome.storage.local.get(["selectedVoice"]);
@@ -436,7 +632,6 @@ async function getSelectedVoice() {
 async function speakSelection(selection) {
   if (!selection?.text) return;
 
-  // Stop any existing audio and highlighting
   if (currentAudio) {
     currentAudio.pause();
     currentAudio = null;
@@ -447,9 +642,11 @@ async function speakSelection(selection) {
 
   const voice = await getSelectedVoice();
   if (!voice) {
-    setBubbleStatus("No voices found");
+    setBubbleStatus("No voice");
     return;
   }
+
+  currentVoice = voice;
 
   try {
     const res = await fetch(`${API_BASE}/speak`, {
@@ -462,25 +659,19 @@ async function speakSelection(selection) {
       }),
     });
 
-    if (!res.ok) throw new Error("TTS failed");
+    if (!res.ok) throw new Error();
     const data = await res.json();
-    if (!data?.audio) throw new Error("No audio returned");
+    if (!data?.audio) throw new Error();
 
-    // Store timings
     currentTimings = data.timings || [];
-
-    // Wrap words in spans
     wordSpans = wrapWordsInSpans(selection.range);
 
     if (wordSpans.length === 0) {
-      setBubbleStatus("No words found");
+      setBubbleStatus("No words");
       return;
     }
 
-    // Build timing map
     const timingMap = buildTimingMap(currentTimings, wordSpans);
-
-    // Create audio
     const audioBytes = Uint8Array.from(atob(data.audio), (c) =>
       c.charCodeAt(0)
     );
@@ -490,9 +681,12 @@ async function speakSelection(selection) {
     const audio = new Audio(url);
     currentAudio = audio;
 
+    isReading = true;
+    applyPageDim();
+    showCharacter();
+    startLipSync();
     setBubbleStatus("▶ Playing");
 
-    // Start highlight loop when audio plays
     audio.addEventListener("play", () => {
       startHighlightLoop(audio, currentTimings, timingMap);
     });
@@ -506,8 +700,8 @@ async function speakSelection(selection) {
 
     audio.addEventListener("pause", () => {
       if (audio.ended) return;
-      setBubbleStatus("⏸ Paused");
-      // Stop the animation loop but don't restore DOM
+      setBubbleStatus("⏸");
+      stopLipSync();
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
         animationFrameId = null;
@@ -515,20 +709,18 @@ async function speakSelection(selection) {
     });
 
     audio.addEventListener("error", () => {
-      setBubbleStatus("Audio error");
+      setBubbleStatus("Error");
       stopHighlighting();
       currentAudio = null;
     });
 
     await audio.play();
-  } catch (err) {
-    console.error("Speak error:", err);
+  } catch {
     stopHighlighting();
-    setBubbleStatus("Server not reachable");
+    setBubbleStatus("Server error");
   }
 }
 
-// Selection handling
 let selectionTimer = null;
 document.addEventListener("selectionchange", () => {
   if (selectionTimer) clearTimeout(selectionTimer);
@@ -550,9 +742,7 @@ document.addEventListener("scroll", () => {
       if (rect.width > 0) {
         showBubbleAt(rect);
       }
-    } catch {
-      // Range may become invalid after DOM changes
-    }
+    } catch {}
   }
 });
 
@@ -568,10 +758,12 @@ document.addEventListener("keydown", (e) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg && msg.type === "GET_SELECTION") {
+  if (msg?.type === "GET_SELECTION") {
     const selection = window.getSelection()?.toString() || "";
     sendResponse({ text: selection });
     return true;
   }
   return false;
 });
+
+loadSettings();
