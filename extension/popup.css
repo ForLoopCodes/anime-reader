@@ -1,0 +1,111 @@
+:root {
+  color-scheme: light;
+  --bg: #0f172a;
+  --card: #111827;
+  --muted: #94a3b8;
+  --text: #e2e8f0;
+  --accent: #38bdf8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  width: 360px;
+}
+
+.app {
+  padding: 14px;
+}
+
+header h1 {
+  font-size: 16px;
+  margin: 0 0 4px 0;
+}
+
+.sub {
+  margin: 0 0 12px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.label {
+  display: block;
+  margin: 8px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+select,
+textarea,
+button,
+input[type="range"] {
+  width: 100%;
+}
+
+select,
+textarea {
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.actions button {
+  flex: 1;
+}
+
+button {
+  border: 1px solid #1f2937;
+  background: #0b1220;
+  color: var(--text);
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #0b1220;
+  font-weight: 600;
+}
+
+.status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 16px;
+}
+
+audio {
+  width: 100%;
+}

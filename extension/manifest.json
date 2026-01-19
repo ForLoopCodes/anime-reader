@@ -1,21 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "Anime Voice Reader",
+  "name": "Anime Voice Screen Reader",
   "version": "1.0.0",
-  "description": "Convert selected text to anime character voices using local RVC voice conversion",
-  "permissions": ["activeTab", "scripting", "storage"],
-  "host_permissions": ["http://localhost:8000/*"],
+  "description": "Reads selected text using the Anime Voice Reader server.",
   "action": {
+    "default_title": "Anime Voice",
     "default_popup": "popup.html"
   },
-  "background": {
-    "service_worker": "background.js"
-  },
+  "permissions": ["activeTab"],
+  "host_permissions": ["http://localhost:8000/*"],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "css": ["content.css"]
+      "run_at": "document_idle"
     }
   ]
 }
