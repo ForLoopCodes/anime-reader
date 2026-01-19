@@ -5,14 +5,18 @@ let bubbleBtn = null;
 let bubbleStatus = null;
 let selectionCache = null;
 let currentAudio = null;
-let highlightRanges = [];
-let highlightSet = null;
-let highlightTimeouts = [];
 let cachedVoices = null;
+
+// Word highlighting system - using real-time sync
+let wordSpans = [];
+let animationFrameId = null;
+let currentTimings = [];
+let lastHighlightedIndex = -1;
 
 const STYLE_ID = "anime-voice-reader-style";
 const BUBBLE_ID = "anime-voice-reader-bubble";
-const HIGHLIGHT_NAME = "anime-voice";
+const WORD_HIGHLIGHT_CLASS = "anime-voice-word-highlight";
+const WORD_SPAN_CLASS = "anime-voice-word";
 
 function ensureStyles() {
   if (document.getElementById(STYLE_ID)) return;
@@ -42,17 +46,25 @@ function ensureStyles() {
       padding: 6px 10px;
       border-radius: 8px;
       cursor: pointer;
+      transition: background 0.15s;
+    }
+    #${BUBBLE_ID} button:hover {
+      background: #7dd3fc;
     }
     #${BUBBLE_ID} .status {
       color: #94a3b8;
       margin-left: 6px;
     }
-    ::highlight(${HIGHLIGHT_NAME}) {
-      background-color: #db7e7e;
-      color: #111827;
-      border-radius: 4px;
-      text-decoration: underline;
-      display: initial;
+    .${WORD_SPAN_CLASS} {
+      transition: all 0.08s ease-out;
+    }
+    .${WORD_HIGHLIGHT_CLASS} {
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%) !important;
+      color: #111827 !important;
+      border-radius: 3px;
+      padding: 2px 4px;
+      margin: -2px -4px;
+      box-shadow: 0 2px 12px rgba(251, 191, 36, 0.6);
     }
   `;
   document.head.appendChild(style);
@@ -89,7 +101,6 @@ function setBubbleStatus(msg) {
 
 function showBubbleAt(rect) {
   ensureBubble();
-  const padding = 8;
   const top = Math.max(8, rect.top - 36);
   const left = Math.min(Math.max(8, rect.left), window.innerWidth - 160);
   bubbleEl.style.top = `${top}px`;
@@ -120,7 +131,7 @@ function getSelectionData() {
   try {
     const range = sel.getRangeAt(0);
     const rect = range.getBoundingClientRect();
-    return { text, range, rect };
+    return { text, range: range.cloneRange(), rect };
   } catch {
     return null;
   }
@@ -139,102 +150,279 @@ async function loadVoices() {
   return cachedVoices;
 }
 
-function clearHighlights() {
-  highlightTimeouts.forEach((t) => clearTimeout(t));
-  highlightTimeouts = [];
-  if (highlightSet) highlightSet.clear();
-  highlightRanges = [];
+// ============ REAL-TIME WORD HIGHLIGHTING SYSTEM ============
+
+function normalizeWord(word) {
+  return word.toLowerCase().replace(/[^\w]/g, "");
 }
 
-function initHighlights() {
-  if (!("highlights" in CSS)) return null;
-  if (!highlightSet) {
-    highlightSet = new Highlight();
-    CSS.highlights.set(HIGHLIGHT_NAME, highlightSet);
+/**
+ * Stop the highlight animation loop and restore DOM
+ */
+function stopHighlighting() {
+  if (animationFrameId) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
   }
-  return highlightSet;
-}
+  currentTimings = [];
+  lastHighlightedIndex = -1;
 
-function getWordRanges(range) {
-  const ranges = [];
-  const root = range.commonAncestorContainer;
-  if (root.nodeType === Node.TEXT_NODE) {
-    const text = root.nodeValue || "";
-    let start = 0;
-    let end = text.length;
-    if (root === range.startContainer) start = range.startOffset;
-    if (root === range.endContainer) end = range.endOffset;
-    if (start < end) {
-      const segment = text.slice(start, end);
-      const regex = /\S+/g;
-      let match;
-      while ((match = regex.exec(segment))) {
-        const wordStart = start + match.index;
-        const wordEnd = wordStart + match[0].length;
-        const wordRange = document.createRange();
-        wordRange.setStart(root, wordStart);
-        wordRange.setEnd(root, wordEnd);
-        ranges.push(wordRange);
-      }
+  // Remove all highlights
+  wordSpans.forEach((span) => {
+    if (span && span.classList) {
+      span.classList.remove(WORD_HIGHLIGHT_CLASS);
     }
-    return ranges;
+  });
+
+  // Restore DOM
+  restoreOriginalNodes();
+}
+
+/**
+ * Restore the original DOM by replacing spans with text nodes
+ */
+function restoreOriginalNodes() {
+  const spansToRestore = [...wordSpans];
+  wordSpans = [];
+
+  spansToRestore.forEach((span) => {
+    try {
+      if (span && span.parentNode) {
+        const textNode = document.createTextNode(span.textContent || "");
+        span.parentNode.replaceChild(textNode, span);
+      }
+    } catch (e) {
+      // Ignore errors during cleanup
+    }
+  });
+
+  // Normalize to merge adjacent text nodes
+  try {
+    document.body.normalize();
+  } catch (e) {
+    // Ignore
   }
+}
+
+/**
+ * Get all text nodes within a range
+ */
+function getTextNodesInRange(range) {
+  const textNodes = [];
+  const root = range.commonAncestorContainer;
+
+  if (root.nodeType === Node.TEXT_NODE) {
+    textNodes.push({
+      node: root,
+      start: range.startOffset,
+      end: range.endOffset,
+    });
+    return textNodes;
+  }
+
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: (node) => {
-      if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
+      if (!node.nodeValue || !node.nodeValue.trim())
+        return NodeFilter.FILTER_REJECT;
       if (!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
   });
 
-  let node = walker.nextNode();
-  while (node) {
-    const text = node.nodeValue || "";
-    let start = 0;
-    let end = text.length;
-    if (node === range.startContainer) start = range.startOffset;
-    if (node === range.endContainer) end = range.endOffset;
-    if (start < end) {
-      const segment = text.slice(start, end);
-      const regex = /\S+/g;
-      let match;
-      while ((match = regex.exec(segment))) {
-        const wordStart = start + match.index;
-        const wordEnd = wordStart + match[0].length;
-        const wordRange = document.createRange();
-        wordRange.setStart(node, wordStart);
-        wordRange.setEnd(node, wordEnd);
-        ranges.push(wordRange);
-      }
-    }
-    node = walker.nextNode();
+  let node;
+  while ((node = walker.nextNode())) {
+    const start = node === range.startContainer ? range.startOffset : 0;
+    const end =
+      node === range.endContainer ? range.endOffset : node.nodeValue.length;
+    textNodes.push({ node, start, end });
   }
-  return ranges;
+
+  return textNodes;
 }
 
-function scheduleHighlights(timings) {
-  clearHighlights();
-  if (!timings || !timings.length || !highlightRanges.length) return;
-  const highlight = initHighlights();
-  if (!highlight) return;
-  const length = Math.min(timings.length, highlightRanges.length);
-  for (let i = 0; i < length; i += 1) {
-    const t = timings[i];
-    const startMs = Math.max(0, Math.floor(t.start * 1000));
-    const endMs = Math.max(startMs + 10, Math.floor(t.end * 1000));
-    highlightTimeouts.push(
-      setTimeout(() => {
-        highlight.clear();
-        if (highlightRanges[i]) highlight.add(highlightRanges[i]);
-      }, startMs),
-    );
-    highlightTimeouts.push(
-      setTimeout(() => {
-        highlight.clear();
-      }, endMs),
-    );
+/**
+ * Wrap words in spans for highlighting
+ */
+function wrapWordsInSpans(range) {
+  ensureStyles();
+  const spans = [];
+
+  let textNodes;
+  try {
+    textNodes = getTextNodesInRange(range);
+  } catch (e) {
+    console.error("Failed to get text nodes:", e);
+    return spans;
   }
+
+  for (const { node, start, end } of textNodes) {
+    try {
+      const text = node.nodeValue || "";
+      const segment = text.slice(start, end);
+
+      const regex = /\S+/g;
+      const matches = [];
+      let match;
+      while ((match = regex.exec(segment))) {
+        matches.push({
+          word: match[0],
+          index: start + match.index,
+        });
+      }
+
+      if (matches.length === 0) continue;
+
+      const fragment = document.createDocumentFragment();
+      let lastIndex = 0;
+
+      for (const m of matches) {
+        if (m.index > lastIndex) {
+          fragment.appendChild(
+            document.createTextNode(text.slice(lastIndex, m.index))
+          );
+        }
+
+        const span = document.createElement("span");
+        span.className = WORD_SPAN_CLASS;
+        span.textContent = m.word;
+        spans.push(span);
+        fragment.appendChild(span);
+
+        lastIndex = m.index + m.word.length;
+      }
+
+      if (lastIndex < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+      }
+
+      if (node.parentNode) {
+        node.parentNode.replaceChild(fragment, node);
+      }
+    } catch (e) {
+      console.error("Failed to wrap words in node:", e);
+    }
+  }
+
+  return spans;
 }
+
+/**
+ * Build a mapping from span index to timing index
+ */
+function buildTimingMap(timings, spans) {
+  const map = []; // map[spanIndex] = timingIndex
+  let timingIndex = 0;
+
+  for (
+    let spanIndex = 0;
+    spanIndex < spans.length && timingIndex < timings.length;
+    spanIndex++
+  ) {
+    const spanWord = normalizeWord(spans[spanIndex].textContent || "");
+
+    // Look for this word in remaining timings
+    let found = false;
+    for (let t = timingIndex; t < timings.length && t < timingIndex + 3; t++) {
+      const timingWord = normalizeWord(timings[t].word || "");
+      if (
+        spanWord === timingWord ||
+        spanWord.includes(timingWord) ||
+        timingWord.includes(spanWord)
+      ) {
+        map[spanIndex] = t;
+        timingIndex = t + 1;
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      // Skip this span, no matching timing
+      map[spanIndex] = -1;
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Real-time highlight loop using audio.currentTime
+ */
+function startHighlightLoop(audio, timings, timingMap) {
+  if (!audio || !timings.length || !wordSpans.length) return;
+
+  function updateHighlight() {
+    if (!currentAudio || currentAudio.paused || currentAudio.ended) {
+      return;
+    }
+
+    const currentTime = audio.currentTime;
+    let targetSpanIndex = -1;
+
+    // Find which span should be highlighted based on current time
+    for (let i = 0; i < wordSpans.length; i++) {
+      const timingIdx = timingMap[i];
+      if (timingIdx === -1 || timingIdx === undefined) continue;
+
+      const timing = timings[timingIdx];
+      if (timing && currentTime >= timing.start && currentTime < timing.end) {
+        targetSpanIndex = i;
+        break;
+      }
+    }
+
+    // Also check if we're past a word's start but before the next word starts
+    if (targetSpanIndex === -1) {
+      for (let i = wordSpans.length - 1; i >= 0; i--) {
+        const timingIdx = timingMap[i];
+        if (timingIdx === -1 || timingIdx === undefined) continue;
+
+        const timing = timings[timingIdx];
+        if (timing && currentTime >= timing.start) {
+          // Check if there's a next timing
+          const nextTimingIdx = timingIdx + 1;
+          if (
+            nextTimingIdx >= timings.length ||
+            currentTime < timings[nextTimingIdx].start
+          ) {
+            targetSpanIndex = i;
+            break;
+          }
+        }
+      }
+    }
+
+    // Update highlight if changed
+    if (targetSpanIndex !== lastHighlightedIndex) {
+      // Remove old highlight
+      if (
+        lastHighlightedIndex >= 0 &&
+        lastHighlightedIndex < wordSpans.length
+      ) {
+        const oldSpan = wordSpans[lastHighlightedIndex];
+        if (oldSpan && oldSpan.classList) {
+          oldSpan.classList.remove(WORD_HIGHLIGHT_CLASS);
+        }
+      }
+
+      // Add new highlight
+      if (targetSpanIndex >= 0 && targetSpanIndex < wordSpans.length) {
+        const span = wordSpans[targetSpanIndex];
+        if (span && span.classList) {
+          span.classList.add(WORD_HIGHLIGHT_CLASS);
+        }
+      }
+
+      lastHighlightedIndex = targetSpanIndex;
+    }
+
+    animationFrameId = requestAnimationFrame(updateHighlight);
+  }
+
+  animationFrameId = requestAnimationFrame(updateHighlight);
+}
+
+// ============ END WORD HIGHLIGHTING SYSTEM ============
 
 async function getSelectedVoice() {
   const stored = await chrome.storage.local.get(["selectedVoice"]);
@@ -247,11 +435,14 @@ async function getSelectedVoice() {
 
 async function speakSelection(selection) {
   if (!selection?.text) return;
+
+  // Stop any existing audio and highlighting
   if (currentAudio) {
     currentAudio.pause();
     currentAudio = null;
   }
-  clearHighlights();
+  stopHighlighting();
+
   setBubbleStatus("Loading...");
 
   const voice = await getSelectedVoice();
@@ -259,7 +450,6 @@ async function speakSelection(selection) {
     setBubbleStatus("No voices found");
     return;
   }
-  highlightRanges = getWordRanges(selection.range);
 
   try {
     const res = await fetch(`${API_BASE}/speak`, {
@@ -271,34 +461,74 @@ async function speakSelection(selection) {
         speed: 1.0,
       }),
     });
+
     if (!res.ok) throw new Error("TTS failed");
     const data = await res.json();
     if (!data?.audio) throw new Error("No audio returned");
 
+    // Store timings
+    currentTimings = data.timings || [];
+
+    // Wrap words in spans
+    wordSpans = wrapWordsInSpans(selection.range);
+
+    if (wordSpans.length === 0) {
+      setBubbleStatus("No words found");
+      return;
+    }
+
+    // Build timing map
+    const timingMap = buildTimingMap(currentTimings, wordSpans);
+
+    // Create audio
     const audioBytes = Uint8Array.from(atob(data.audio), (c) =>
-      c.charCodeAt(0),
+      c.charCodeAt(0)
     );
     const blob = new Blob([audioBytes], { type: "audio/wav" });
     const url = URL.createObjectURL(blob);
 
     const audio = new Audio(url);
     currentAudio = audio;
-    scheduleHighlights(data.timings || []);
-    setBubbleStatus("Playing");
+
+    setBubbleStatus("▶ Playing");
+
+    // Start highlight loop when audio plays
+    audio.addEventListener("play", () => {
+      startHighlightLoop(audio, currentTimings, timingMap);
+    });
+
     audio.addEventListener("ended", () => {
       setBubbleStatus("");
-      clearHighlights();
+      stopHighlighting();
+      URL.revokeObjectURL(url);
+      currentAudio = null;
     });
+
     audio.addEventListener("pause", () => {
-      setBubbleStatus("");
+      if (audio.ended) return;
+      setBubbleStatus("⏸ Paused");
+      // Stop the animation loop but don't restore DOM
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
     });
+
+    audio.addEventListener("error", () => {
+      setBubbleStatus("Audio error");
+      stopHighlighting();
+      currentAudio = null;
+    });
+
     await audio.play();
   } catch (err) {
-    clearHighlights();
+    console.error("Speak error:", err);
+    stopHighlighting();
     setBubbleStatus("Server not reachable");
   }
 }
 
+// Selection handling
 let selectionTimer = null;
 document.addEventListener("selectionchange", () => {
   if (selectionTimer) clearTimeout(selectionTimer);
@@ -314,15 +544,26 @@ document.addEventListener("selectionchange", () => {
 });
 
 document.addEventListener("scroll", () => {
-  if (selectionCache?.rect) {
-    const rect = selectionCache.range.getBoundingClientRect();
-    showBubbleAt(rect);
+  if (selectionCache?.range) {
+    try {
+      const rect = selectionCache.range.getBoundingClientRect();
+      if (rect.width > 0) {
+        showBubbleAt(rect);
+      }
+    } catch {
+      // Range may become invalid after DOM changes
+    }
   }
 });
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     hideBubble();
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+    }
+    stopHighlighting();
   }
 });
 
