@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os,uuid,asyncio,subprocess,sys,json,base64,re,wave
+import os,uuid,asyncio,subprocess,sys,json,base64
 from pathlib import Path
 from typing import Optional
 
@@ -91,29 +91,25 @@ def rvc_convert(inp,out,character):
     if idx.exists(): cmd+=["-ip",str(idx)]
     subprocess.run(cmd,check=True)
 
-def estimate_timings(text,wav_path:Path):
-    words=re.findall(r"\S+",text)
-    if not words:
-        return []
+def timings_with_whisper(wav_path:Path):
     try:
-        with wave.open(str(wav_path),"rb") as wf:
-            frames=wf.getnframes()
-            rate=wf.getframerate()
-            if rate<=0 or frames<=0:
-                return []
-            duration=frames/float(rate)
-    except Exception:
-        return []
-    per=duration/len(words) if len(words) else 0
-    if per<=0:
-        return []
+        import torch
+        import whisper_timestamped as whisper
+    except Exception as e:
+        raise HTTPException(500,"Install whisper-timestamped to get word timings")
+
+    device="cuda" if torch.cuda.is_available() else "cpu"
+    model=whisper.load_model("base",device=device)
+    result=whisper.transcribe(model,audio=str(wav_path))
+
     timings=[]
-    current=0.0
-    for w in words:
-        start=current
-        end=current+per
-        timings.append({"word":w,"start":start,"end":end})
-        current=end
+    for seg in result.get("segments",[]):
+        for w in seg.get("words",[]):
+            word=w.get("word") or w.get("text")
+            start=w.get("start")
+            end=w.get("end")
+            if word and start is not None and end is not None:
+                timings.append({"word":word.strip(),"start":float(start),"end":float(end)})
     return timings
 
 @app.get("/")
@@ -142,7 +138,7 @@ async def speak(req:SpeakRequest,background:BackgroundTasks):
             raise HTTPException(500,"Audio generation failed")
 
         if not timings:
-            timings=estimate_timings(req.text,out)
+            timings=timings_with_whisper(out)
         
         # Read audio file and convert to base64
         with open(out,"rb") as f:
