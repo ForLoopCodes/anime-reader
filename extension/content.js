@@ -48,9 +48,11 @@ function ensureStyles() {
       margin-left: 6px;
     }
     ::highlight(${HIGHLIGHT_NAME}) {
-      background: #fde047;
+      background-color: #db7e7e;
       color: #111827;
       border-radius: 4px;
+      text-decoration: underline;
+      display: initial;
     }
   `;
   document.head.appendChild(style);
@@ -68,6 +70,7 @@ function ensureBubble() {
   bubbleBtn.addEventListener("click", () => {
     if (selectionCache?.text) {
       speakSelection(selectionCache);
+      window.getSelection().removeAllRanges();
     }
   });
 

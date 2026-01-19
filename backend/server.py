@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os,uuid,asyncio,subprocess,sys,json,base64
+import os,uuid,asyncio,subprocess,sys,json,base64,re,wave
 from pathlib import Path
 from typing import Optional
 
@@ -91,6 +91,31 @@ def rvc_convert(inp,out,character):
     if idx.exists(): cmd+=["-ip",str(idx)]
     subprocess.run(cmd,check=True)
 
+def estimate_timings(text,wav_path:Path):
+    words=re.findall(r"\S+",text)
+    if not words:
+        return []
+    try:
+        with wave.open(str(wav_path),"rb") as wf:
+            frames=wf.getnframes()
+            rate=wf.getframerate()
+            if rate<=0 or frames<=0:
+                return []
+            duration=frames/float(rate)
+    except Exception:
+        return []
+    per=duration/len(words) if len(words) else 0
+    if per<=0:
+        return []
+    timings=[]
+    current=0.0
+    for w in words:
+        start=current
+        end=current+per
+        timings.append({"word":w,"start":start,"end":end})
+        current=end
+    return timings
+
 @app.get("/")
 async def root():
     return {"status":"ok"}
@@ -115,6 +140,9 @@ async def speak(req:SpeakRequest,background:BackgroundTasks):
         rvc_convert(base,out,req.character)
         if not out.exists():
             raise HTTPException(500,"Audio generation failed")
+
+        if not timings:
+            timings=estimate_timings(req.text,out)
         
         # Read audio file and convert to base64
         with open(out,"rb") as f:
