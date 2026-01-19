@@ -47,6 +47,16 @@ async function loadVoices() {
       opt.textContent = "No voices found";
       voiceSelect.appendChild(opt);
     }
+    const stored = await chrome.storage.local.get(["selectedVoice"]);
+    if (
+      stored.selectedVoice &&
+      voices.some((v) => v.name === stored.selectedVoice)
+    ) {
+      voiceSelect.value = stored.selectedVoice;
+    } else if (voices.length) {
+      voiceSelect.value = voices[0].name;
+      await chrome.storage.local.set({ selectedVoice: voices[0].name });
+    }
     setStatus(voices.length ? "Ready" : "No voices available");
   } catch (err) {
     setStatus("Server not reachable. Start backend server.");
@@ -107,6 +117,12 @@ useSelectionBtn.addEventListener("click", async () => {
 speakBtn.addEventListener("click", async () => {
   const text = textArea.value || (await getSelectionText());
   await speakText(text);
+});
+
+voiceSelect.addEventListener("change", async () => {
+  if (voiceSelect.value) {
+    await chrome.storage.local.set({ selectedVoice: voiceSelect.value });
+  }
 });
 
 speedEl.addEventListener("input", setSpeedLabel);
